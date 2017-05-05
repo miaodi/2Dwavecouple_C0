@@ -31,8 +31,6 @@ void CompToPhy_patch1(double xi, double eta, double &x, double &y);
 
 void CompToPhy_patch2(double xi, double eta, double &x, double &y);
 
-double exactSolution(double x, double y);
-
 MatrixXd weightFunction(int p, int m, double *knot) {
     MatrixXd C = MatrixXd::Zero((m - 2 * p), m - p);
     double gaussian[] = {-sqrt(3.0 / 5), 0, sqrt(3.0 / 5)};
@@ -125,9 +123,15 @@ void Bezier_Knot(double order, double *knot, int m, double *&knot_projection,
         knot_projection[i] = Knot[i];
 }
 
+comp Analytical(double x, double y, double omega, double theta) {
+    comp result(cos(omega * x * cos(theta) + omega * y * sin(theta)),
+                sin(omega * x * cos(theta) + omega * y * sin(theta)));
+    return result;
+}
+
 int main() {
-    double theta = 0;
-    double omega = 20;
+    double theta = pi/4;
+    double omega = 10;
     double *gaussian = x7;
     double *weight = w7;
     int gaussian_points = 7;
@@ -142,10 +146,10 @@ int main() {
     double *knots_y_patch2_projection;
     double insertion_patch1[] = {.5};
     double insertion_patch2[] = {1.0 / 3, 2.0 / 3};
-    GenerateKnot(p_x, refine, 0, insertion_patch1, knots_x_patch1, m_x_patch1);
-    GenerateKnot(p_y, refine, 0, insertion_patch1, knots_y_patch1, m_y_patch1);
-    GenerateKnot(p_x, refine, 0, insertion_patch2, knots_x_patch2, m_x_patch2);
-    GenerateKnot(p_y, refine, 0, insertion_patch2, knots_y_patch2, m_y_patch2);
+    GenerateKnot(p_x, refine, 1, insertion_patch1, knots_x_patch1, m_x_patch1);
+    GenerateKnot(p_y, refine, 1, insertion_patch1, knots_y_patch1, m_y_patch1);
+    GenerateKnot(p_x, refine, 2, insertion_patch2, knots_x_patch2, m_x_patch2);
+    GenerateKnot(p_y, refine, 2, insertion_patch2, knots_y_patch2, m_y_patch2);
     Bezier_Knot(p_y, knots_y_patch2, m_y_patch2, knots_y_patch2_projection,
                 m_y_patch2_projection);
     double *knots_y_coupling;
@@ -164,7 +168,7 @@ int main() {
             elements_x_patch2 = m_x_patch2 - 2 * p_x,
             elements_y_patch2 = m_y_patch2 - 2 * p_y;
     int elements_y_coupling = m_y_coupling - 2 * p_y;
-    /*
+
         MatrixXd M = MatrixXd::Zero(dof_y_patch2, dof_y_patch2),
                   N2N1 = MatrixXd::Zero(dof_y_patch2, dof_y_patch1);
         for (int ii_y = 0; ii_y < elements_y_coupling; ii_y++) {
@@ -206,7 +210,8 @@ int main() {
         MN2N1_new(dof_y_patch2 - 1, dof_y_patch1 - 1) = 1;
         MN2N1_new.block(1, 0, dof_y_patch2 - 2, dof_y_patch1) = MN2N1;
 
-    */
+
+    /*
     MatrixXd M = MatrixXd::Zero(dof_y_patch2_projection, dof_y_patch2_projection),
             N2N1 = MatrixXd::Zero(dof_y_patch2_projection, dof_y_patch1);
     for (int ii_y = 0; ii_y < elements_y_coupling; ii_y++) {
@@ -244,9 +249,11 @@ int main() {
     MatrixXd weightness = weightFunction(p_y, m_y_patch2, knots_y_patch2);
     MatrixXd CC = localProjection(knots_y_patch2, p_y, m_y_patch2);
     MatrixXd MN2N1_projection = weightness * CC.fullPivHouseholderQr().solve(MN2N1);
+     */
     MatrixXd couplingMatrix = MatrixXd::Zero(dof_patch2,
                                              (dof_patch2 - dof_y_patch2 + dof_y_patch1));
-    couplingMatrix.block(0, 0, dof_y_patch2, dof_y_patch1) = MN2N1_projection;
+
+    couplingMatrix.block(0, 0, dof_y_patch2, dof_y_patch1) = MN2N1_new;
     couplingMatrix.block(dof_y_patch2, dof_y_patch1,
                          (dof_patch2 - dof_y_patch2),
                          (dof_patch2 - dof_y_patch2)) = MatrixXd::Identity(
@@ -402,16 +409,43 @@ int main() {
     K_patch2.resize(1, 1);
     M_patch2.resize(1, 1);
     MatrixXcd K = MatrixXcd::Zero((dof_patch1 + dof_patch2 -
-                                 dof_y_patch2), (dof_patch1 + dof_patch2 - dof_y_patch2));
+                                   dof_y_patch2), (dof_patch1 + dof_patch2 - dof_y_patch2));
     K.block(0, 0, dof_patch1, dof_patch1) = K_compl_patch1;
     K.block((dof_patch1 - dof_y_patch1), (dof_patch1 - dof_y_patch1),
             (dof_patch2 - dof_y_patch2 + dof_y_patch1),
             (dof_patch2 - dof_y_patch2 + dof_y_patch1)) += couplingMatrix.transpose()
                                                            * K_compl_patch2 * couplingMatrix;
-    cout<<K<<endl;
-    /*
-    MatrixXd x_basis_patch1 = MatrixXd::Zero(dof_x_patch1, dof_x_patch1);
-    VectorXd U_rhs_patch1 = VectorXd::Zero(dof_x_patch1);
+
+    MatrixXcd x_basis_patch1 = MatrixXcd::Zero(dof_x_patch1, dof_x_patch1);
+    VectorXcd U_x_bottom_rhs_patch1 = VectorXcd::Zero(dof_x_patch1);
+    for (int ii_x = 0; ii_x < elements_x_patch1; ii_x++) {
+        double J_x = (knots_x_patch1[ii_x + p_x + 1] - knots_x_patch1[ii_x + p_x]) / 2;
+        double Middle_x = (knots_x_patch1[ii_x + p_x + 1] + knots_x_patch1[ii_x +
+                                                                           p_x]) / 2;
+        int i_x = Findspan(m_x_patch1, p_x, knots_x_patch1, Middle_x);
+        for (int jj_x = 0; jj_x < gaussian_points; jj_x++) {
+            double eta = 0;
+            double xi = Middle_x + J_x * gaussian[jj_x];
+            double **ders_x;
+            DersBasisFuns(i_x, xi, p_x, knots_x_patch1, 0, ders_x);
+            VectorXd Nxi = VectorXd::Zero(dof_x_patch1);
+            for (int kk_x = 0; kk_x < p_x + 1; kk_x++) {
+                Nxi(i_x - p_x + kk_x) = ders_x[0][kk_x];
+            }
+            for (int k = 0; k < 1; k++)
+                delete ders_x[k];
+            delete[] ders_x;
+            double pxpxi, pxpeta, pypxi, pypeta;
+            Geometry(xi, eta, pxpxi, pxpeta, pypxi, pypeta);
+            double x, y;
+            CompToPhy_patch1(xi, eta, x, y);
+            auto u_analytical = Analytical(x, y, omega, theta);
+            x_basis_patch1.real() += weight[jj_x] * Nxi * MatrixXd(Nxi.transpose()) * J_x * pxpxi;
+            U_x_bottom_rhs_patch1 += weight[jj_x] * Nxi * u_analytical * J_x * pxpxi;
+        }
+    }
+    VectorXcd U_x_bottom_dirichlet_patch1 = x_basis_patch1.fullPivHouseholderQr().solve(U_x_bottom_rhs_patch1);
+    VectorXcd U_x_top_rhs_patch1 = VectorXd::Zero(dof_x_patch1);
     for (int ii_x = 0; ii_x < elements_x_patch1; ii_x++) {
         double J_x = (knots_x_patch1[ii_x + p_x + 1] - knots_x_patch1[ii_x + p_x]) / 2;
         double Middle_x = (knots_x_patch1[ii_x + p_x + 1] + knots_x_patch1[ii_x +
@@ -433,14 +467,14 @@ int main() {
             Geometry(xi, eta, pxpxi, pxpeta, pypxi, pypeta);
             double x, y;
             CompToPhy_patch1(xi, eta, x, y);
-            x_basis_patch1 += weight[jj_x] * Nxi * MatrixXd(Nxi.transpose()) * J_x * pxpxi;
-            U_rhs_patch1 += weight[jj_x] * Nxi * exactSolution(x, y) * J_x * pxpxi;
+            auto u_analytical = Analytical(x, y, omega, theta);
+            U_x_top_rhs_patch1 += weight[jj_x] * Nxi * u_analytical * J_x * pxpxi;
         }
     }
-    VectorXd U_dirichlet_patch1 = x_basis_patch1.fullPivHouseholderQr().solve(U_rhs_patch1);
+    VectorXcd U_x_top_dirichlet_patch1 = x_basis_patch1.fullPivHouseholderQr().solve(U_x_top_rhs_patch1);
 
-    MatrixXd y_basis_patch1 = MatrixXd::Zero(dof_y_patch1, dof_y_patch1);
-    VectorXd U_y_rhs_patch1 = VectorXd::Zero(dof_y_patch1);
+    MatrixXcd y_basis_patch1 = MatrixXcd::Zero(dof_y_patch1, dof_y_patch1);
+    VectorXcd U_y_rhs_patch1 = VectorXcd::Zero(dof_y_patch1);
     for (int ii_y = 0; ii_y < elements_y_patch1; ii_y++) {
         double J_y = (knots_y_patch1[ii_y + p_y + 1] - knots_y_patch1[ii_y + p_y]) / 2;
         double Middle_y = (knots_y_patch1[ii_y + p_y + 1] + knots_y_patch1[ii_y + p_y]) / 2;
@@ -461,21 +495,23 @@ int main() {
             Geometry(xi, eta, pxpxi, pxpeta, pypxi, pypeta);
             double x, y;
             CompToPhy_patch1(xi, eta, x, y);
+            auto u_analytical = Analytical(x, y, omega, theta);
             y_basis_patch1 += weight[jj_y] * Neta * Neta.transpose() * J_y * pypeta;
-            U_y_rhs_patch1 += weight[jj_y] * Neta * exactSolution(x, y) * J_y * pypeta;
+            U_y_rhs_patch1 += weight[jj_y] * Neta * u_analytical * J_y * pypeta;
         }
     }
-    VectorXd U_y_dirichlet_patch1 = y_basis_patch1.fullPivHouseholderQr().solve(U_y_rhs_patch1);
+    VectorXcd U_y_dirichlet_patch1 = y_basis_patch1.fullPivHouseholderQr().solve(U_y_rhs_patch1);
+    cout << U_y_dirichlet_patch1 << endl;
 
-    MatrixXd x_basis_patch2 = MatrixXd::Zero(dof_x_patch2, dof_x_patch2);
-    VectorXd U_rhs_patch2 = VectorXd::Zero(dof_x_patch2);
+    MatrixXcd x_basis_patch2 = MatrixXcd::Zero(dof_x_patch2, dof_x_patch2);
+    VectorXcd U_x_bottom_rhs_patch2 = VectorXcd::Zero(dof_x_patch2);
     for (int ii_x = 0; ii_x < elements_x_patch2; ii_x++) {
         double J_x = (knots_x_patch2[ii_x + p_x + 1] - knots_x_patch2[ii_x + p_x]) / 2;
         double Middle_x = (knots_x_patch2[ii_x + p_x + 1] + knots_x_patch2[ii_x +
                                                                            p_x]) / 2;
         int i_x = Findspan(m_x_patch2, p_x, knots_x_patch2, Middle_x);
         for (int jj_x = 0; jj_x < gaussian_points; jj_x++) {
-            double eta = .999999999999;
+            double eta = 0;
             double xi = Middle_x + J_x * gaussian[jj_x];
             double **ders_x;
             DersBasisFuns(i_x, xi, p_x, knots_x_patch2, 0, ders_x);
@@ -490,14 +526,43 @@ int main() {
             Geometry(xi, eta, pxpxi, pxpeta, pypxi, pypeta);
             double x, y;
             CompToPhy_patch2(xi, eta, x, y);
-            x_basis_patch2 += weight[jj_x] * Nxi * MatrixXd(Nxi.transpose()) * J_x * pxpxi;
-            U_rhs_patch2 += weight[jj_x] * Nxi * exactSolution(x, y) * J_x * pxpxi;
+            auto u_analytical = Analytical(x, y, omega, theta);
+            x_basis_patch2.real() += weight[jj_x] * Nxi * MatrixXd(Nxi.transpose()) * J_x * pxpxi;
+            U_x_bottom_rhs_patch2 += weight[jj_x] * Nxi * u_analytical * J_x * pxpxi;
         }
     }
-    VectorXd U_dirichlet_patch2 = x_basis_patch2.fullPivHouseholderQr().solve(U_rhs_patch2);
+    VectorXcd U_x_bottom_dirichlet_patch2 = x_basis_patch2.fullPivHouseholderQr().solve(U_x_bottom_rhs_patch2);
+    VectorXcd U_x_top_rhs_patch2 = VectorXcd::Zero(dof_x_patch2);
+    for (int ii_x = 0; ii_x < elements_x_patch2; ii_x++) {
+        double J_x = (knots_x_patch2[ii_x + p_x + 1] - knots_x_patch2[ii_x + p_x]) / 2;
+        double Middle_x = (knots_x_patch2[ii_x + p_x + 1] + knots_x_patch2[ii_x +
+                                                                           p_x]) / 2;
+        int i_x = Findspan(m_x_patch2, p_x, knots_x_patch2, Middle_x);
+        for (int jj_x = 0; jj_x < gaussian_points; jj_x++) {
+            double eta = .9999999999999;
+            double xi = Middle_x + J_x * gaussian[jj_x];
+            double **ders_x;
+            DersBasisFuns(i_x, xi, p_x, knots_x_patch2, 0, ders_x);
+            VectorXd Nxi = VectorXd::Zero(dof_x_patch2);
+            for (int kk_x = 0; kk_x < p_x + 1; kk_x++) {
+                Nxi(i_x - p_x + kk_x) = ders_x[0][kk_x];
+            }
+            for (int k = 0; k < 1; k++)
+                delete ders_x[k];
+            delete[] ders_x;
+            double pxpxi, pxpeta, pypxi, pypeta;
+            Geometry(xi, eta, pxpxi, pxpeta, pypxi, pypeta);
+            double x, y;
+            CompToPhy_patch2(xi, eta, x, y);
+            auto u_analytical = Analytical(x, y, omega, theta);
+            U_x_top_rhs_patch2 += weight[jj_x] * Nxi * u_analytical * J_x * pxpxi;
+        }
+    }
+    VectorXcd U_x_top_dirichlet_patch2 = x_basis_patch2.fullPivHouseholderQr().solve(U_x_top_rhs_patch2);
+    cout << U_x_top_dirichlet_patch2 << endl;
 
-    MatrixXd y_basis_patch2 = MatrixXd::Zero(dof_y_patch2, dof_y_patch2);
-    VectorXd U_y_rhs_patch2 = VectorXd::Zero(dof_y_patch2);
+    MatrixXcd y_basis_patch2 = MatrixXcd::Zero(dof_y_patch2, dof_y_patch2);
+    VectorXcd U_y_rhs_patch2 = VectorXcd::Zero(dof_y_patch2);
     for (int ii_y = 0; ii_y < elements_y_patch2; ii_y++) {
         double J_y = (knots_y_patch2[ii_y + p_y + 1] - knots_y_patch2[ii_y + p_y]) / 2;
         double Middle_y = (knots_y_patch2[ii_y + p_y + 1] + knots_y_patch2[ii_y + p_y]) / 2;
@@ -518,27 +583,34 @@ int main() {
             Geometry(xi, eta, pxpxi, pxpeta, pypxi, pypeta);
             double x, y;
             CompToPhy_patch2(xi, eta, x, y);
-            y_basis_patch2 += weight[jj_y] * Neta * Neta.transpose() * J_y * pypeta;
-            U_y_rhs_patch2 += weight[jj_y] * Neta * exactSolution(x, y) * J_y * pypeta;
+            auto u_analytical = Analytical(x, y, omega, theta);
+            y_basis_patch2.real() += weight[jj_y] * Neta * Neta.transpose() * J_y * pypeta;
+            U_y_rhs_patch2 += weight[jj_y] * Neta * u_analytical * J_y * pypeta;
         }
     }
-    VectorXd U_y_dirichlet_patch2 = y_basis_patch2.fullPivHouseholderQr().solve(U_y_rhs_patch2);
+    VectorXcd U_y_dirichlet_patch2 = y_basis_patch2.fullPivHouseholderQr().solve(U_y_rhs_patch2);
+    cout << U_y_dirichlet_patch2 << endl;
 
-
-    VectorXd Dirichlet = VectorXd::Zero((dof_patch1 + dof_patch2 - dof_y_patch2));
+    VectorXcd Dirichlet = VectorXcd::Zero((dof_patch1 + dof_patch2 - dof_y_patch2));
     for (int i = 0; i < dof_y_patch1; i++)
         Dirichlet[i] = U_y_dirichlet_patch1[i];
     for (int i = 0; i < dof_x_patch1; i++)
-        Dirichlet[dof_y_patch1 * (i + 1) - 1] = U_dirichlet_patch1[i];
+        Dirichlet[dof_y_patch1 * (i + 1) - 1] = U_x_top_dirichlet_patch1[i];
+    for (int i = 0; i < dof_x_patch1; i++)
+        Dirichlet[dof_y_patch1 * i] = U_x_bottom_dirichlet_patch1[i];
     for (int i = 1; i < dof_x_patch2; i++)
-        Dirichlet[dof_patch1 + dof_y_patch2 * i - 1] = U_dirichlet_patch2[i];
+        Dirichlet[dof_patch1 + dof_y_patch2 * i - 1] = U_x_top_dirichlet_patch2[i];
+    for (int i = 1; i < dof_x_patch2; i++)
+        Dirichlet[dof_patch1 + dof_y_patch2 * (i - 1)] = U_x_bottom_dirichlet_patch2[i];
     for (int i = 0; i < dof_y_patch2; i++)
         Dirichlet[dof_patch1 + dof_patch2 - 2 * dof_y_patch2 + i] = U_y_dirichlet_patch2[i];
-    VectorXd F = -K * Dirichlet;
+
+    VectorXcd F = -K * Dirichlet;
     MatrixXd transform = MatrixXd::Zero(dof_patch1 + dof_patch2 -
                                         dof_y_patch2 - dof_y_patch1 - dof_y_patch2 - 2 * (dof_x_patch1 + dof_x_patch2) +
                                         6, dof_patch1 + dof_patch2 -
                                            dof_y_patch2);
+
     int x_it = 0, y_it = 0;
     for (int i = 0; i < dof_x_patch1; i++) {
         for (int j = 0; j < dof_y_patch1; j++) {
@@ -562,16 +634,18 @@ int main() {
             }
         }
     }
-    MatrixXd K_cal = transform * K * transform.transpose();
-    VectorXd F_cal = transform * F;
-    VectorXd U_cal = K_cal.fullPivHouseholderQr().solve(F_cal);
-    VectorXd U_patch1 = VectorXd::Zero(dof_patch1);
-    VectorXd U_patch2 = VectorXd::Zero(dof_patch2);
+    MatrixXcd K_cal = transform * K * transform.transpose();
+    VectorXcd F_cal = transform * F;
+    VectorXcd U_cal = K_cal.fullPivHouseholderQr().solve(F_cal);
+    cout << U_cal;
+
+    VectorXcd U_patch1 = VectorXcd::Zero(dof_patch1);
+    VectorXcd U_patch2 = VectorXcd::Zero(dof_patch2);
     x_it = 0;
     for (int i = 0; i < dof_x_patch1; i++) {
         for (int j = 0; j < dof_y_patch1; j++) {
             if (j == 0) {
-                U_patch1[j + i * dof_y_patch1] = 0;
+                U_patch1[j + i * dof_y_patch1] = Dirichlet[j + i * dof_y_patch1];
             } else if (i == 0) {
                 U_patch1[j + i * dof_y_patch1] = Dirichlet[j + i * dof_y_patch1];
             } else if (j == dof_y_patch1 - 1) {
@@ -619,20 +693,19 @@ int main() {
                     double pxpxi, pxpeta, pypxi, pypeta;
                     Geometry(xi, eta, pxpxi, pxpeta, pypxi, pypeta);
                     double Jacobian = pxpxi * pypeta - pxpeta * pypxi;
-                    MatrixXd U = (NxiNeta.transpose()) * U_patch1;
+                    MatrixXcd U = (NxiNeta.transpose()) * U_patch1;
                     double x, y;
                     CompToPhy_patch1(xi, eta, x, y);
-                    L2_norm_error += weight[jj_x] * weight[jj_y] * (pow(U(0, 0) - exactSolution(x,
-                                                                                                y), 2)) * J_x * J_y
+                    auto u_analytical = Analytical(x, y, omega, theta);
+                    L2_norm_error += weight[jj_x] * weight[jj_y] * (pow(abs(U(0, 0) - u_analytical), 2)) * J_x * J_y
                                      * Jacobian;
-                    L2_norm += weight[jj_x] * weight[jj_y] * (pow(exactSolution(x, y),
-                                                                  2)) * J_x * J_y * Jacobian;
+                    L2_norm += weight[jj_x] * weight[jj_y] * (pow(abs(u_analytical), 2)) * J_x * J_y * Jacobian;
                 }
             }
         }
     }
     cout << sqrt(L2_norm_error) / sqrt(L2_norm) << endl;
-*/
+
     return 0;
 }
 
@@ -704,8 +777,4 @@ void CompToPhy_patch1(double xi, double eta, double &x, double &y) {
 void CompToPhy_patch2(double xi, double eta, double &x, double &y) {
     y = eta;
     x = .5 * xi + .5;
-}
-
-double exactSolution(double x, double y) {
-    return x * y;
 }
